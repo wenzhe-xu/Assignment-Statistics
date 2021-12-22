@@ -73,6 +73,8 @@ library(glmnet)
 
 * lasso：[glmnet](https://hastie.su.domains/Papers/glmnet.pdf) 包中的glmnet函数
 
+Get code and data from [github](https://github.com/wenzhe-xu/Assignment-Statistics), have an Octotastic day!
+
 
 # 描述性统计
 
@@ -87,7 +89,7 @@ library(glmnet)
 ```{r infomation}
 df <- read.csv('data/FullData.csv',header = T)
 tdf <- as_tibble(df)
-info <- read.csv('data/info-mac.csv',header = T)
+info <- read.csv('data/info.csv',header = T)
 info$index <- as.character(info$index)
 kable(info, align = 'c', caption = "数据说明")
 showtext_auto()
@@ -186,7 +188,7 @@ kable(pf, align = 'c', caption='球员惯用脚情况')
 Preffered_Position这一属性给出了各位球员的擅长位置，如下表所示。
 
 ```{r position}
-position <- read.csv('data/position-utf8.csv',header = T)
+position <- read.csv('data/position.csv',header = T)
 # kable(position, align = 'c', caption = '球员的擅长位置及分类')
 ```
 
