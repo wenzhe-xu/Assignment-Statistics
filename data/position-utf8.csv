@@ -1,0 +1,16 @@
+﻿简称,全称,含义,分类
+CF,Centre-forward,中锋,forward
+LW,Left Winger,左边锋,forward
+RW,Right Winger,右边锋,forward
+ST,Striker,前锋,forward
+CAM,Central Attacking Midfielder,进攻型中场,middle
+CDM,Central Defensive Midfielder,防守型中场,middle
+CM,Central Midfielder,中场,middle
+LM,Left Midfielder,左中场,middle
+RM,Rightl Midfielder,右中场,middle
+CB,Centre-back,中后卫,backward
+LB,Left-back,左后卫,backward
+LWB,Left-Wing-back,左翼卫,backward
+RB,Right-back,右后卫,backward
+RWB,Right Wing-back,右翼卫,backward
+GK,Goalkeeper,守门员,goalkeeper

@@ -1,0 +1,640 @@
+---
+title: "数理统计大作业II"
+subtitle: "职业球员能力回归分析"
+author:
+  - 11班 
+  - 许文哲 
+  - SY2008111
+documentclass: ctexart
+geometry: "left=2.5cm,right=2cm,top=3cm,bottom=2.5cm"
+keywords:
+  - 中文
+  - R Markdown
+output:
+  rticles::ctex:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+indent: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  fig.align = "center",
+  message = FALSE,
+  warning = FALSE)
+library(tidyverse)
+library(nortest)
+library(showtext)
+library(ggplot2)
+library(ggpubr)
+library(lattice)
+library(knitr)
+library(tibble)
+library(dplyr)
+library(caret)
+library(stringr)
+library(nnet)
+library(psych)
+select = dplyr::select
+library(MASS)
+library(glmnet)
+```
+
+# 任务介绍
+
+**任务要求**
+
+应用回归方法解决一个实际问题
+
+自己选择一个实际问题，收集数据，使用回归方法解决。
+
+注意：所使用的回归方法不限于课堂讲过的线性回归方法，也可以使用其他回归方法，如曲线回归方法，广义回归方法等。
+
+**任务目标**
+
+通过网络收集2017年世界球坛职业球员的数据，并进行如下分析。
+
+1. 对球员的评分和各项能力水平进行**多元线性回归分析**，通过**逐步回归**或**lasso**的方法对变量进行筛选，解决多重共线性的问题，寻找对球员评分影响最大的能力属性，基于此，对球员评分进行预测。
+
+2. 对球员的场上位置和各项能力水平进行**多项logistic回归**，通过**逐步回归**或**lasso**的方法对变量进行筛选，建立模型，对球员的场上位置进行预测。
+
+**方法实现**
+
+本报告的数据分析使用 [R语言](https://www.r-project.org)实现，本报告的编写基于 [RMarkdown](https://rmarkdown.rstudio.com)，代码详见footballplayer.md。
+
+* 多元线性回归：lm函数
+
+* 多项logistic回归：[nnet](https://cran.r-project.org/web/packages/nnet/) 包中的multinom函数
+
+* 逐步回归：step函数
+
+* lasso：[glmnet](https://hastie.su.domains/Papers/glmnet.pdf) 包中的glmnet函数
+
+
+# 描述性统计
+
+## 数据来源
+
+> 数据由热心网友Ustinian提供。
+
+## 数据介绍
+
+数据集包含了2017年世界足坛职业比赛范围内活跃的足球运动员的能力数据，包含53个属性，共17588条数据，表1给出了数据的各项属性的说明。数据较为全面地包含了17588位职业球员的基本信息、生理数据和足球能力数据，可以反映球员能力。
+
+```{r infomation}
+df <- read.csv('data/FullData.csv',header = T)
+tdf <- as_tibble(df)
+info <- read.csv('data/info-mac.csv',header = T)
+info$index <- as.character(info$index)
+kable(info, align = 'c', caption = "数据说明")
+showtext_auto()
+```
+
+## 描述性统计
+
+### 球员主要数据
+
+```{r summary}
+tdf <- separate(data = tdf, col = Height, sep = ' ',
+                      into = c('Height','Height_2'))
+tdf <- separate(data = tdf, col = Weight, sep = ' ',
+                      into = c('Weight','Weight_2'))
+tdf$Height <- as.numeric(tdf$Height)
+tdf$Weight <- as.numeric(tdf$Weight)
+
+summary1 <- cbind(summary(tdf$Rating),summary(tdf$Height),summary(tdf$Weight),
+                  summary(tdf$Age))
+colnames(summary1) <- c('评分','身高/cm','体重/kg','年龄')
+kable(summary1,align = 'c', caption = '球员基础数据',digits = 1)
+```
+
+```{r Rating}
+rating <- tdf$Rating %>% 
+  as.data.frame()
+
+rating.hist <- ggplot(rating,aes(x=.)) +
+  geom_histogram(breaks=seq(40,100,1),fill = "lightblue",color="gray")+
+  ylab("频数") + xlab("评分")+
+  ggtitle("球员评分分布") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust=0.5))
+
+rating.density <- ggplot(rating,aes(x=.)) +
+  geom_density(fill = "lightblue", alpha=0.5, color="gray") + theme_bw() +
+  ylab("密度") + xlab("评分")+
+  ggtitle("评分密度图") + theme(plot.title = element_text(hjust=0.5))
+
+rating.qq <- ggplot(rating,aes(sample=.)) +
+  stat_qq() + stat_qq_line() +theme_bw() +
+  ggtitle("QQ图") + theme(plot.title = element_text(hjust=0.5))
+
+```
+
+```{r WHA,fig.width=8,fig.height=4,fig.align='center',fig.cap='球员基本数据'}
+age <- tdf$Age %>% 
+  as.data.frame()
+
+age_hist <- ggplot(age,aes(x=.)) +
+  geom_histogram(breaks=seq(15,45,1),fill = "lightblue",color="gray")+
+  ylab("频数") + xlab("评分")+
+  ggtitle("年龄") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust=0.5))
+
+weight <- tdf$Weight %>% 
+  as.data.frame()
+
+weight_hist <- ggplot(weight,aes(x=.)) +
+  geom_histogram(breaks=seq(50,110,2),fill = "lightblue",color="gray")+
+  ylab("频数") + xlab("评分")+
+  ggtitle("体重") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust=0.5))
+
+height <- tdf$Height %>% 
+  as.data.frame()
+
+height_hist <- ggplot(height,aes(x=.)) +
+  geom_histogram(breaks=seq(150,210,2),fill = "lightblue",color="gray")+
+  ylab("频数") + xlab("评分")+
+  ggtitle("身高") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust=0.5))
+
+ggarrange(rating.hist,rating.density, rating.qq,
+          age_hist, weight_hist, height_hist, ncol = 3, nrow = 2)
+```
+
+### 球员惯用脚
+
+```{r, preffered_foot}
+pf <- tdf %>% 
+  group_by(Preffered_Foot) %>% 
+  summarise(count=n()) %>% 
+  as.data.frame()
+
+colnames(pf) <- c('惯用脚','频数')
+
+kable(pf, align = 'c', caption='球员惯用脚情况')
+```
+
+### 球员擅长位置
+
+Preffered_Position这一属性给出了各位球员的擅长位置，如下表所示。
+
+```{r position}
+position <- read.csv('data/position-utf8.csv',header = T)
+# kable(position, align = 'c', caption = '球员的擅长位置及分类')
+```
+
+```{r position2}
+posi_df <- tdf %>% 
+  select(Preffered_Position) %>% 
+  separate(col = Preffered_Position, sep = "/", 
+         into = c('Preffered_Position','Preffered_Position_2')) %>% 
+  select(-Preffered_Position_2) %>% 
+  group_by(Preffered_Position) %>% 
+  summarise(count=n()) %>% 
+  as.data.frame()
+
+colnames(posi_df) <- c('简称','频数')
+
+posi_df <- merge(position, posi_df, by='简称', all.x = T)
+
+kable(posi_df, align = 'c', caption='球员擅长位置')
+```
+
+### 球员各项能力
+
+球员各项能力分布如图2所示。
+
+```{r graph_function}
+library(grid)
+i=22
+get_histplot <- function(i,df=tdf) {
+  colname <- colnames(tdf)[i]
+  df <- df %>% 
+    select(all_of(colname)) %>% 
+    as.data.frame()
+  
+  hist_plot <- ggplot(df,aes(x=df[,1])) +
+    geom_histogram(breaks=seq(1,100,1),fill = "lightblue",color="lightblue")+
+    ylab("频数") + xlab("评分")+
+    ggtitle(colname) + theme_bw() +
+    theme(plot.title = element_text(hjust=0.5))
+  
+  return(hist_plot)
+}
+```
+
+```{r bigplot,fig.height=12,fig.width=12,out.width='95%', fig.cap="球员各项能力分布"}
+plot_list <- list()
+for (i in 22:55) {
+  plot_list <- c(plot_list,list(get_histplot(i)))
+}
+
+ggarrange(plotlist = plot_list,ncol=6,nrow = 6)
+```
+
+## 数据预处理
+
+### 缺失值处理
+经过检查，数据的缺失值主要集中在National_Position、National_Kit、Club、Club_Position、Club_Kit、Club_Joining和Contract_Expiry这几个属性中，这很容易理解：如果球员能力水平不足以达到被国家队征召的水平，那么他的National_Position（国家队位置）和National_Kit（国家队球衣号码）便是缺失值；同理，如果球员在2017年处于自由转会状态，即球员没有与任何一家俱乐部签约，那么他的Club、Club_Position、Club_Kit、Club_Joining和Contract_Expiry这几个俱乐部相关的属性便是缺失值。因此，对于以上几个属性，我们予以删除处理。
+
+### 其他处理
+
+1. 删除属性
+
+* National_Position、National_Kit、Club、Club_Position、Club_Kit、Club_Joining、Contract_Expiry：理由已阐述如上。
+
+* Birth_Date：出生日期，我们可以从Age获取相关信息，因而删除。
+
+* Work_Rate：工作效率，与球员与更衣室的关系、球员性格有关，对于球员能力评分的影响较小。
+
+* Preffered_Foot：擅长左（右）脚，目前鲜有研究表明左右脚会明显影响球员能力。
+
+* Weak_foot：非惯用脚使用频率，理由同上。
+
+* Skill_Moves：技术等级，反映了后面多个百分制属性的综合情况，与后面的变量具有强烈的相关性，且我们对于如此综合性的指标不感兴趣。
+
+2. 变量整合
+
+多数球员能力特点比较全面，擅长位置有多个。例如：C·罗纳尔多擅长的位置有LW和ST，但都属于前场；德布劳内擅长的位置有CAM/RM/LM都属于中场；迪巴拉擅长的位置有ST和CAM，前者属于前场，后者属于中场。对于这种情况，我们仅保留球员最擅长的位置，即第一个位置，并按照forward、middle、backward和goalkeeper进行合并分类。
+
+```{r definition, include=FALSE}
+# get mean absolute percentage error
+get_MAPE <- function(test,prediction){
+  result <- abs((test-prediction)/test)
+  MAPE <- mean(result)
+  return(MAPE)
+}
+# min_max标准化
+min_max <- function(vec){
+  result <- (vec-min(vec))/(max(vec)-min(vec))
+  return(result)
+}
+# 获取f1-score
+get_f1 <- function(p,r){
+  f1 <- (2*p*r)/(r+p)
+  return(f1)
+}
+# 获取广义f1-score
+get_marcoF1 <- function(pred,truth){
+  xtab <- table(pred,truth)
+  cfm <- as.matrix(xtab)
+  p_1 <- cfm[1,1]/sum(cfm[1,])
+  r_1 <- cfm[1,1]/sum(cfm[,1])
+  p_2 <- cfm[2,2]/sum(cfm[2,])
+  r_2 <- cfm[2,2]/sum(cfm[,2])
+  p_3 <- cfm[3,3]/sum(cfm[3,])
+  r_3 <- cfm[3,3]/sum(cfm[,3])
+  f11 <- get_f1(p_1,r_1)
+  f12 <- get_f1(p_2,r_2)
+  f13 <- get_f1(p_3,r_3)
+  F1 <- mean(c(f11,f12,f13))
+  return(F1)
+}
+# 定义位置
+forward <- c("CF","LW","RW","ST")
+middle <- c("CAM","CDM","CM","LM","RM")
+backward <- c("CB","LB","LWB","RB","RWB")
+goalkeeper <- c("GK")
+```
+
+```{r data_cleaning, include=FALSE}
+# 读取数据
+data_full <- read.csv('data/FullData.csv',header = T)
+# 抛弃单位，便于运算
+data_full <- separate(data = data_full, col = Height, sep = ' ',
+                      into = c('Height','Height_2'))
+data_full <- separate(data = data_full, col = Weight, sep = ' ',
+                      into = c('Weight','Weight_2'))
+data_full$Height <- as.numeric(data_full$Height)
+data_full$Weight <- as.numeric(data_full$Weight)
+# 保留第一个擅长位置
+data_full <- separate(data = data_full,col = Preffered_Position, sep = "/", 
+         into = c('Preffered_Position','Preffered_Position_2'))
+data_full$Area <- data_full$Preffered_Position
+data_full$Area[which(data_full$Area %in% forward)] <- 'forward'
+data_full$Area[which(data_full$Area %in% middle)] <- 'middle'
+data_full$Area[which(data_full$Area %in% backward)] <- 'backward'
+data_full$Area[which(data_full$Area %in% goalkeeper)] <- 'goalkeeper'
+t_data_full <- as_tibble(data_full)
+# 去除不需要的列
+t_data_full <- t_data_full %>% 
+  select(-(Nationality:Contract_Expiry),-Birth_Date,-Work_Rate
+         ,-Preffered_Foot,-ends_with('_2'),-Weak_foot,-Skill_Moves) %>% 
+  select(Name,Preffered_Position,Area,Rating,everything())
+```
+
+# 回归分析
+
+## 门将位置评分
+
+由于门将位置的特殊性，其相关能力已经很明显地标注在数据集中（GK_开头的属性），而且门将的位置与场上其他位置的球员能力分布存在肉眼可见的差距，门将更多依靠手部能力、站位、反应能力和定位球指挥能力，对于速度、传球、逼抢、盯人、铲球等能力的要求相对较低（尽管部分阵型很看重门将的长传能力，但其对于其长传能力的要求仍大幅低于中场球员或后卫）。因此，我们首先对门将进行回归分析。
+
+```{r GK}
+# set.seed(98765)
+# GK_attribute <- c('GK_Positioning','GK_Diving','GK_Kicking','GK_Handling','GK_Reflexes')
+# # dataset
+# GK <- t_data_full %>%
+#   filter(Preffered_Position == "GK") %>% # only goalkeeper
+#   select(-Preffered_Position, -Name, -Area) %>%
+#   as.data.frame()
+# # FULL Model
+# GK_0_Fullmodel <- lm(Rating ~ ., GK)
+# summary(GK_0_Fullmodel)
+# # Variable Selection —— backward stepping via AIC
+# GK_0_model <- step(GK_0_Fullmodel, direction = 'backward')
+# summary(GK_0_model)
+# GK_formula <- GK_0_model$call$formula # get formula
+# # Data Partition
+# GK_index <- createDataPartition(GK$Rating,p=0.7,list=F)
+# GK_train <- GK[GK_index,]
+# GK_test <- GK[-GK_index,]
+# # training model
+# GK_lm <- lm(GK_formula, GK_train)
+# summary(GK_lm)
+# # prediction
+# GK_pred <- predict(GK_lm,GK_test)
+# # get MAPE
+# get_MAPE(GK_test$Rating,GK_pred)
+```
+
+
+## 前场球员评分
+
+```{r forward}
+
+# for_pl <- t_data_full %>% 
+#   filter(Area == "forward") %>% 
+#   select(-Preffered_Position, -Area, -Name, -starts_with("GK_")) %>% 
+#   as.data.frame()
+# 
+# # 各属性分数为同一量纲，且区间均在0-100，无需标准化
+# # for_pl <- sapply(for_pl, min_max) %>%
+# #   as.data.frame()
+# 
+# for_pl_index <- createDataPartition(for_pl$Rating, p=0.7, list = F)
+# for_pl_train <- for_pl[for_pl_index,]
+# for_pl_test <- for_pl[-for_pl_index,]
+# 
+# for_fullmodel <- lm(Rating~., data = for_pl_train)
+# summary(for_fullmodel)
+# for_model <- step(for_fullmodel,direction = 'backward')
+# summary(for_model)
+# 
+# # PCA_for <- princomp(for_pl[,-1],cor = T)
+# # st_for <- fa.parallel(for_pl[,-1])
+# # 
+# # PCA_for_data <- predict(PCA_for)
+# # PCA_for_data <- PCA_for_data[,1:5]
+# 
+# pred_full <- for_fullmodel %>% 
+#   predict(for_pl_test)
+# 
+# get_MAPE(for_pl_test$Rating,pred_full)
+# 
+# pred_stepwised <- for_model %>% 
+#   predict(for_pl_test)
+# 
+# get_MAPE(for_pl_test$Rating,pred_stepwised)
+# 
+# plot(for_model,1)
+
+```
+
+
+```{r forward_lasso}
+# # for.lasso.fit <- glmnet(x=as.matrix(for_pl_train[,-1]), y = for_pl_train$Rating,
+# #                          alpha = 1)
+# 
+# for.lasso.cvfit <- cv.glmnet(x=as.matrix(for_pl_train[,-1]), 
+#                              y = for_pl_train$Rating,
+#                             alpha = 1, nfolds = 10)
+# 
+# plot(for.lasso.cvfit)
+# 
+# for.lasso.coef <- coef(for.lasso.cvfit$glmnet.fit,s=for.lasso.cvfit$lambda.1se,exact = F)
+# 
+# for.lasso.coef
+# # 
+# # for.lm.laSelect <- lm(Rating~Height+Ball_Control+Dribbling+Reactions+Attacking_Position+
+# #                         Composure+Short_Pass+Acceleration+Speed+Stamina+Strength+
+# #                         Heading+Shot_Power+Finishing+Long_Shots+Volleys, data=for_pl_train)
+# # 
+# # summary(for.lm.laSelect)
+# # 
+# # for.lm.laSelect <- lm(Rating~Height+Ball_Control+Dribbling+Reactions+
+# #                         Attacking_Position+Short_Pass+Acceleration+Speed+Strength+
+# #                         Heading+Shot_Power+Finishing+Long_Shots+Volleys,
+# #                       data=for_pl_train)
+# # 
+# # summary(for.lm.laSelect)
+# # 
+# # pred_lasso <- for.lm.laSelect %>% 
+# #   predict(for_pl_test)
+# # 
+# # get_MAPE(for_pl_test$Rating,pred_lasso)
+```
+
+## 中场球员评分
+
+```{r middle}
+# 
+# mid_pl <- t_data_full %>% 
+#   filter(Area == "middle") %>% 
+#   select(-Preffered_Position, -Area, -Name, -starts_with("GK_")) %>% 
+#   as.data.frame()
+# 
+# mid_pl_index <- createDataPartition(mid_pl$Rating, p=0.7, list = F)
+# mid_pl_train <- mid_pl[mid_pl_index,]
+# mid_pl_test <- mid_pl[-mid_pl_index,]
+# 
+# mid_fullmodel <- lm(Rating~., data = mid_pl_train)
+# summary(mid_fullmodel)
+# mid_model <- step(mid_fullmodel,direction = 'backward')
+# summary(mid_model)
+# 
+# pred_full <- mid_fullmodel %>% 
+#   predict(mid_pl_test)
+# 
+# get_MAPE(mid_pl_test$Rating,pred_full)
+# 
+# pred_stepwised <- mid_model %>% 
+#   predict(mid_pl_test)
+# 
+# get_MAPE(mid_pl_test$Rating,pred_stepwised)
+# 
+# plot(mid_model,1)
+
+```
+
+
+```{r middle_lasso}
+# mid.lasso.cvfit <- cv.glmnet(x=as.matrix(mid_pl_train[,-1]),
+#                              y = mid_pl_train$Rating,
+#                             alpha = 1, nfolds = 10)
+# 
+# plot(mid.lasso.cvfit)
+# 
+# mid.lasso.coef <- coef(mid.lasso.cvfit$glmnet.fit,s=mid.lasso.cvfit$lambda.1se,exact = F)
+# 
+# mid.lasso.coef
+# 
+# # mid.lm.laSelect <- lm(Rating~Height+Ball_Control+Dribbling+Reactions+Attacking_Position+
+# #                         Composure+Short_Pass+Acceleration+Speed+Stamina+Strength+
+# #                         Heading+Shot_Power+Finishing+Long_Shots+Volleys, data=mid_pl_train)
+# #
+# # summary(mid.lm.laSelect)
+# #
+# # mid.lm.laSelect <- lm(Rating~Height+Ball_Control+Dribbling+Reactions+
+# #                         Attacking_Position+Short_Pass+Acceleration+Speed+Strength+
+# #                         Heading+Shot_Power+Finishing+Long_Shots+Volleys,
+# #                       data=mid_pl_train)
+# #
+# # summary(mid.lm.laSelect)
+# #
+# # pred_lasso <- mid.lm.laSelect %>%
+# #   predict(mid_pl_test)
+# #
+# # get_MAPE(mid_pl_test$Rating,pred_lasso)
+```
+
+## 后场球员评分
+
+```{r backward}
+
+# back_pl <- t_data_full %>% 
+#   filter(Area == "backward") %>% 
+#   select(-Preffered_Position, -Area, -Name, -starts_with("GK_")) %>% 
+#   as.data.frame()
+# 
+# back_pl_index <- createDataPartition(back_pl$Rating, p=0.7, list = F)
+# back_pl_train <- back_pl[back_pl_index,]
+# back_pl_test <- back_pl[-back_pl_index,]
+# 
+# back_fullmodel <- lm(Rating~., data = back_pl_train)
+# summary(back_fullmodel)
+# back_model <- step(back_fullmodel,direction = 'backward')
+# summary(back_model)
+# 
+# pred_full <- back_fullmodel %>% 
+#   predict(back_pl_test)
+# 
+# get_MAPE(back_pl_test$Rating,pred_full)
+# 
+# pred_stepwised <- back_model %>% 
+#   predict(back_pl_test)
+# 
+# get_MAPE(back_pl_test$Rating,pred_stepwised)
+# 
+# plot(back_model,1)
+
+```
+
+
+```{r backward_lasso}
+# back.lasso.cvfit <- cv.glmnet(x=as.matrix(back_pl_train[,-1]), 
+#                              y = back_pl_train$Rating,
+#                             alpha = 1, nfolds = 10)
+# 
+# plot(back.lasso.cvfit)
+# 
+# back.lasso.coef <- coef(back.lasso.cvfit$glmnet.fit,s=back.lasso.cvfit$lambda.1se,exact = F)
+# 
+# back.lasso.coef
+# 
+# # back.lm.laSelect <- lm(Rating~Height+Ball_Control+Dribbling+Reactions+Attacking_Position+
+# #                         Composure+Short_Pass+Acceleration+Speed+Stamina+Strength+
+# #                         Heading+Shot_Power+Finishing+Long_Shots+Volleys, data=back_pl_train)
+# # 
+# # summary(back.lm.laSelect)
+# # 
+# # back.lm.laSelect <- lm(Rating~Height+Ball_Control+Dribbling+Reactions+
+# #                         Attacking_Position+Short_Pass+Acceleration+Speed+Strength+
+# #                         Heading+Shot_Power+Finishing+Long_Shots+Volleys,
+# #                       data=back_pl_train)
+# # 
+# # summary(back.lm.laSelect)
+# # 
+# # pred_lasso <- back.lm.laSelect %>% 
+# #   predict(back_pl_test)
+# # 
+# # get_MAPE(back_pl_test$Rating,pred_lasso)
+```
+
+## 球员位置判别
+
+```{r multinorm}
+# set.seed(10086)
+# area_df <- t_data_full %>% 
+#   filter(Preffered_Position != "GK") %>% 
+#   select(-Preffered_Position, -Rating, -Name,-Age, -starts_with("GK_")) %>% 
+#   as.data.frame()
+# 
+# area_index <- createDataPartition(area_df$Area,p = 0.7,list = F)
+# area_train <- area_df[area_index,]
+# area_test <- area_df[-area_index,]
+# 
+# area_model <- multinom(Area~., data = area_train)
+# 
+# area_pred <- area_model %>% 
+#   predict(area_test)
+# 
+# xtab <- table(area_pred,area_test$Area)
+# area_cfm <- confusionMatrix(xtab)
+# area_cfm
+# 
+# marco_F1 <- get_marcoF1(area_pred,area_test$Area)
+# 
+# # area_model_back <- step(area_model,direction = 'backward')
+# # 
+# # area_pred_back <- area_model_back %>% 
+# #   predict(area_test)
+# # F1_back <- get_marcoF1(area_pred_back,area_test$Area)
+# # 
+# # corr.test(area_df[,-1])
+# 
+# # lasso.fit <- glmnet(x = as.matrix(area_train[,-1]),
+# #                     y = area_train$Area, family = 'multinomial',alpha = 1)
+# # plot(lasso.fit, xvar="lambda", label=TRUE)
+# # 
+# # cvlasso <- cv.glmnet(x = as.matrix(area_train[,-1]),
+# #                      y = area_train$Area,family = 'multinomial',
+# #                      alpha = 1, nfolds = 5)
+# # plot(cvlasso)
+# # cvlasso$lambda.min
+# # coef(cvlasso$glmnet.fit,s=cvlasso$lambda.min,exact = F)
+
+```
+
+```{r k_fold}
+# area_cv <- area_df
+# area_cv$index <- createFolds(area_df$Area, k = 5, list = F)
+# area_cv <- as_tibble(area_cv)
+# 
+# F1 <- vector()
+# for (i in 1:5) {
+#   area_cvtrain <- area_cv %>% 
+#     filter(index != i) %>% 
+#     select(-index) %>% 
+#     as.data.frame()
+#   area_cvtest <- area_cv %>% 
+#     filter(index == i) %>% 
+#     select(-index) %>% 
+#     as.data.frame()
+#   area_cvmodel <- multinom(Area~., data = area_cvtrain)
+#   area_cvpred <- area_cvmodel %>% 
+#     predict(area_cvtest)
+#   f1 <- get_marcoF1(area_cvpred,area_cvtest$Area)
+#   F1 <- c(F1,f1)
+# }
+# F1
+```
+
+
+
