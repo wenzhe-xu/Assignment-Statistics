@@ -415,11 +415,11 @@ GK <- t_data_full %>%
   as.data.frame()
 # FULL Model
 GK_0_Fullmodel <- lm(Rating ~ ., GK)
-summary(GK_0_Fullmodel)
+
 GK_0Fvif <- car::vif(GK_0_Fullmodel)
 # Variable Selection —— backward stepping via AIC
 GK_0_model <- step(GK_0_Fullmodel, direction = 'backward')
-summary(GK_0_model)
+
 GK_0vif <- car::vif(GK_0_model)
 GK_formula <- GK_0_model$call$formula # get formula
 # Data Partition
@@ -435,206 +435,292 @@ GK_pred <- predict(GK_lm,GK_test)
 get_MAPE(GK_test$Rating,GK_pred)
 ```
 
+因为各能力属性的水平和球员评分都是0-100之间的分数，所以我们可以不必对数据进行标准化处理，下面几个部分的处理相同。
+
+我们首先使用简单的线性回归来拟合模型，因变量为Rating评分，解释变量为属性20-属性53。全模型的拟合结果如下所示。我们可以看出很多解释变量都是不显著的，我们需要对变量进行筛选。
+
+```{r GK_fullmodel}
+summary(GK_0_Fullmodel)
+```
+
+下面给出全模型的方差膨胀因子。可以看出最高值为5.66，不存在严重的多重共线性。但我们仍需要对模型进行变量筛选。
+
+```{r GK_fullvif}
+GK_0Fvif <- GK_0Fvif %>% 
+  as.data.frame()
+colnames(GK_0Fvif) <- c('VIF')
+kable(GK_0Fvif, align = 'c', caption = '全模型的方差膨胀因子')
+```
+
+利用逐步回归算法，根据AIC准则，我们获得了变量筛选后的模型，模型汇总如下，我们可以看出留下的模型都比较显著。意料之中的事情是“GK_”开头的门将特色属性非常的显著，镇静（Composure）和反击（Reactions）也属于非常显著的解释变量，镇静是门将临危不惧的基本素质，反击代表门将在没收足球后形成快速反击的能力；远射（Long_Shots）解释变量较为显著是超出意料的，其系数为负，暂时无法解释；任意球（Freekick_Acuuracy）和点球（Penalties）是门将的加分项，定位球好手中有相当一部分球员是门将，乌拉圭前国门奇拉维特是世界杯历史上第一位主罚任意球的门将，其生涯共打进67粒进球，点球能力较高不仅可以帮助门将扑点，也能为球队在点球大战打入致胜一球。
+
+```{r GK_model}
+summary(GK_0_model)
+```
+
+经过变量筛选后的模型公式为formula = Rating ~ Marking + Reactions + Vision + Composure + Speed + Agility + Long_Shots + Freekick_Accuracy + Penalties + GK_Positioning + GK_Diving + GK_Kicking + GK_Handling + GK_Reflexes，根据这个公式，我们将数据集进行训练集和测试集的划分，进行**10折交叉验证**，获取预测数据的**绝对平均百分比误差为0.42%**，下面给出10折交叉验证结果MAPE的数据特征。
+
+```{r GK_CV}
+GK_cv <- GK
+GK_cv$index <- createFolds(GK_cv$Rating, k = 10, list = F)
+GK_cv <- as_tibble(GK_cv)
+
+MAPE_GK <- vector()
+
+for (i in 1:10) {
+  GK_cv_train <- GK_cv %>% 
+    filter(index != i) %>% 
+    select(-index) %>% 
+    as.data.frame()
+  GK_cv_test <- GK_cv %>% 
+    filter(index == i) %>% 
+    select(-index) %>% 
+    as.data.frame()
+  GK_cvmodel <- lm(GK_formula, GK_cv_train)
+  GK_cvpred <- GK_cvmodel %>% 
+    predict(GK_cv_test)
+  mape <- get_MAPE(GK_cv_test$Rating, GK_cvpred)
+  MAPE_GK <- c(MAPE_GK, mape)
+}
+
+summary(MAPE_GK)
+
+```
+
 ## 前场球员评分
 
-```{r forward}
+```{r forward, include=FALSE}
+set.seed(12345)
+for_pl <- t_data_full %>%
+  filter(Area == "forward") %>%
+  select(-Preffered_Position, -Area, -Name, -starts_with("GK_")) %>%
+  as.data.frame()
 
-# for_pl <- t_data_full %>% 
-#   filter(Area == "forward") %>% 
-#   select(-Preffered_Position, -Area, -Name, -starts_with("GK_")) %>% 
-#   as.data.frame()
-# 
-# # 各属性分数为同一量纲，且区间均在0-100，无需标准化
-# # for_pl <- sapply(for_pl, min_max) %>%
-# #   as.data.frame()
-# 
-# for_pl_index <- createDataPartition(for_pl$Rating, p=0.7, list = F)
-# for_pl_train <- for_pl[for_pl_index,]
-# for_pl_test <- for_pl[-for_pl_index,]
-# 
-# for_fullmodel <- lm(Rating~., data = for_pl_train)
-# summary(for_fullmodel)
-# for_model <- step(for_fullmodel,direction = 'backward')
-# summary(for_model)
-# 
-# # PCA_for <- princomp(for_pl[,-1],cor = T)
-# # st_for <- fa.parallel(for_pl[,-1])
-# # 
-# # PCA_for_data <- predict(PCA_for)
-# # PCA_for_data <- PCA_for_data[,1:5]
-# 
-# pred_full <- for_fullmodel %>% 
-#   predict(for_pl_test)
-# 
-# get_MAPE(for_pl_test$Rating,pred_full)
-# 
-# pred_stepwised <- for_model %>% 
-#   predict(for_pl_test)
-# 
-# get_MAPE(for_pl_test$Rating,pred_stepwised)
-# 
-# plot(for_model,1)
+for_pl_index <- createDataPartition(for_pl$Rating, p=0.7, list = F)
+for_pl_train <- for_pl[for_pl_index,]
+for_pl_test <- for_pl[-for_pl_index,]
 
+for_fullmodel <- lm(Rating~., data = for_pl_train)
+
+for_model <- step(for_fullmodel,direction = 'backward')
+
+for_formula <- for_model$call$formula
+
+forpred_stepwised <- for_model %>%
+  predict(for_pl_test)
+
+for_MAPE <- get_MAPE(for_pl_test$Rating,forpred_stepwised)
 ```
 
+在对于前场球员的分析中，将数据集按照7:3的比例分为训练集和测试集，我们在训练集上通过**逐步回归**的方法进行变量筛选，给出的模型如下，测试集的**MAPE为1.24%**。
+
+```{r for_step}
+summary(for_model)
+```
+
+我们可以看到经过变量筛选后的模型中，比较显著的变量都是我们传统认知里前场球员所需要的能力，如控球技术（Ball_Control)、盘带能力（Dribbling）、反击（Reactions）、攻击站位（Attacking_Position）、短传（Short_Pass）、加速（Acceleration）、速度（Speed）、强壮（Strength）、头球（Heading）、射门力量（Shot_Power）、射门（Finishing）和远射（Long_Shots）；逼抢（Standing_Tackle）作为后卫的典型特色能力属性，在前场球员的回归结果里较为显著也是可以理解的，在对方的后场逼抢对方后卫更容易使得对方犯错，增加己方破门几率。
+
+从系数大小上看，系数较大的几个属性为射门能力、射门力量、控球能力、反击能力、攻击站位、盘带能力和短传能力，这都是我们去评价前锋或者边锋是否是一流球员的基本根据，系数在0.01-0.05之间的属性如远射、加速、速度、头球和身高对于前场球员来说都是很大的加分项。
+
+模型的残差图如下。
+
+```{r for_residual,fig.width=8,fig.height=4,out.width='70%',fig.cap='前场球员模型残差图'}
+plot(for_model,1)
+```
 
 ```{r forward_lasso}
-# # for.lasso.fit <- glmnet(x=as.matrix(for_pl_train[,-1]), y = for_pl_train$Rating,
-# #                          alpha = 1)
-# 
-# for.lasso.cvfit <- cv.glmnet(x=as.matrix(for_pl_train[,-1]), 
-#                              y = for_pl_train$Rating,
-#                             alpha = 1, nfolds = 10)
-# 
-# plot(for.lasso.cvfit)
-# 
-# for.lasso.coef <- coef(for.lasso.cvfit$glmnet.fit,s=for.lasso.cvfit$lambda.1se,exact = F)
-# 
-# for.lasso.coef
-# # 
-# # for.lm.laSelect <- lm(Rating~Height+Ball_Control+Dribbling+Reactions+Attacking_Position+
-# #                         Composure+Short_Pass+Acceleration+Speed+Stamina+Strength+
-# #                         Heading+Shot_Power+Finishing+Long_Shots+Volleys, data=for_pl_train)
-# # 
-# # summary(for.lm.laSelect)
-# # 
-# # for.lm.laSelect <- lm(Rating~Height+Ball_Control+Dribbling+Reactions+
-# #                         Attacking_Position+Short_Pass+Acceleration+Speed+Strength+
-# #                         Heading+Shot_Power+Finishing+Long_Shots+Volleys,
-# #                       data=for_pl_train)
-# # 
-# # summary(for.lm.laSelect)
-# # 
-# # pred_lasso <- for.lm.laSelect %>% 
-# #   predict(for_pl_test)
-# # 
-# # get_MAPE(for_pl_test$Rating,pred_lasso)
+set.seed(12345)
+for.lasso.cvfit <- cv.glmnet(x=as.matrix(for_pl_train[,-1]),
+                             y = for_pl_train$Rating,type.measure="mse",
+                            alpha = 1, nfolds = 10)
+
+for.lasso.coef <- coef(for.lasso.cvfit$glmnet.fit,s=for.lasso.cvfit$lambda.1se,exact = F)
 ```
+
+利用上述的训练集，通过glmnet包中的cv.glmnet函数对数据进行训练，函数的参数alpha取1，即使用**lasso回归**，（取0是为Ridge回归），利用**10折交叉验证**获取最优的lambda取值，结果如下。
+
+```{r for_cvplot,fig.width=8,fig.height=4,out.width='70%',fig.cap='MSE-log(lambda) plot(dorward)'}
+plot(for.lasso.cvfit)
+```
+
+我们得到最优的lambda为0.09469045，得到的系数结果如下，系数非0的即为lasso方法选择出来的变量，即选出了18个变量，我们可以看出，与我们在上一步中通过逐步回归的方法选择出来的解释变量非常接近，二者的适用性可以相互印证。
+
+```{r for_cvcoef}
+for_coef <- as.matrix(for.lasso.coef)
+for_coef <- as.data.frame(for_coef)
+
+for_coef <- for_coef %>% 
+  filter(s1 > 0)
+
+colnames(for_coef) <- c('系数值')
+
+kable(for_coef, align = 'c', caption = 'lasso选择的变量及系数')
+```
+
+在此基础上，我们使用通过lasso的交叉验证的训练出来的模型对测试集进行预测，获得的**MAPE为1.27%**。
+
+```{r for_lassomape}
+for.lasso.pred <- predict(for.lasso.cvfit, newx = as.matrix(for_pl_test[,-1]),
+                          s='lambda.1se')
+for.lasso.mape <- get_MAPE(for_pl_test$Rating,for.lasso.pred)
+```
+
+在后面的两节，我们将对中场球员和后场球员进行相同的分析。
 
 ## 中场球员评分
 
-```{r middle}
-# 
-# mid_pl <- t_data_full %>% 
-#   filter(Area == "middle") %>% 
-#   select(-Preffered_Position, -Area, -Name, -starts_with("GK_")) %>% 
-#   as.data.frame()
-# 
-# mid_pl_index <- createDataPartition(mid_pl$Rating, p=0.7, list = F)
-# mid_pl_train <- mid_pl[mid_pl_index,]
-# mid_pl_test <- mid_pl[-mid_pl_index,]
-# 
-# mid_fullmodel <- lm(Rating~., data = mid_pl_train)
-# summary(mid_fullmodel)
-# mid_model <- step(mid_fullmodel,direction = 'backward')
-# summary(mid_model)
-# 
-# pred_full <- mid_fullmodel %>% 
-#   predict(mid_pl_test)
-# 
-# get_MAPE(mid_pl_test$Rating,pred_full)
-# 
-# pred_stepwised <- mid_model %>% 
-#   predict(mid_pl_test)
-# 
-# get_MAPE(mid_pl_test$Rating,pred_stepwised)
-# 
-# plot(mid_model,1)
+```{r middle, include=FALSE}
+set.seed(12345)
+mid_pl <- t_data_full %>%
+  filter(Area == "middle") %>%
+  select(-Preffered_Position, -Area, -Name, -starts_with("GK_")) %>%
+  as.data.frame()
 
+mid_pl_index <- createDataPartition(mid_pl$Rating, p=0.7, list = F)
+mid_pl_train <- mid_pl[mid_pl_index,]
+mid_pl_test <- mid_pl[-mid_pl_index,]
+
+mid_fullmodel <- lm(Rating~., data = mid_pl_train)
+
+mid_model <- step(mid_fullmodel,direction = 'backward')
+
+pred_stepwised <- mid_model %>%
+  predict(mid_pl_test)
+
+mid_mape <- get_MAPE(mid_pl_test$Rating,pred_stepwised)
 ```
 
+在对于中场球员的分析中，将数据集按照7:3的比例分为训练集和测试集，我们在训练集上通过**逐步回归**的方法进行变量筛选，给出的模型如下，测试集的**MAPE为2.24%**。
+
+```{r mid_step}
+summary(mid_model)
+```
+
+中场位置对于球员的要求较为全面，一方面，中场要负责拦截对方球员的传球路径，另一方面，中场是我方进攻发起的发动机，承担着由守转攻的链接左右，反映在模型上，我们可以看出，经过变量筛选之后，模型依然保留的较多的能力属性。
+
+保留的属性中，我们可以看到既包含了进攻属性，又包含了防守属性，这是中场球员所在位置造成的必然结果。在中场位置中，控球能力（Ball_Control）、短传能力（Short_Pass）是中场球员的基本功，是他们能否控住球权的基本素质，中场球员的反击能力（Reactions）代表了己方球队由守转攻的流畅程度，盘带能力（Dribbling）有时候更能体现出球员的个人素质，盘带能力出色的中场球员往往能够更加顺畅地拜托对方防守球员，给前锋们送出关键助攻，齐达内、里克尔梅、哈维和伊涅斯塔等球员便是最好的例证，以上的能力对应的回归方程系数也是较大的；对于承担着防守任务的后腰球员来说，盯防能力（Marking）、抢断能力（Interceptions）非常重要，如坎特和卡塞米罗；对于承担进攻任务的前腰、前场自由人等角色，盘带（Dribbling）、短传（Short_Pass）、下底传中（Crossing）、加速（Acceleration）、速度（Speed）、远射（Long_Shots）、射门能力（Finishing）和射门力量（Shot_Power）都是他们必须擅长的技能，如曼联时期（第1次）的C罗（这位现役进球最多的前锋在出道时是中场球员）；还有类中场球员是全场的指挥官（如哈维·阿隆索、莫德里奇和托尼·克罗斯），除了中场球员的基本素养，他们还需要具备不俗的长传（Long_Pass）能力、顶级的视野（Vision）、强大的心态（Composure），以上内容在模型中均有体现。
+
+模型的残差图如下。
+
+```{r min_residual,fig.width=8,fig.height=4,out.width='70%',fig.cap='中场球员模型残差图'}
+plot(mid_model,1)
+```
 
 ```{r middle_lasso}
-# mid.lasso.cvfit <- cv.glmnet(x=as.matrix(mid_pl_train[,-1]),
-#                              y = mid_pl_train$Rating,
-#                             alpha = 1, nfolds = 10)
-# 
-# plot(mid.lasso.cvfit)
-# 
-# mid.lasso.coef <- coef(mid.lasso.cvfit$glmnet.fit,s=mid.lasso.cvfit$lambda.1se,exact = F)
-# 
-# mid.lasso.coef
-# 
-# # mid.lm.laSelect <- lm(Rating~Height+Ball_Control+Dribbling+Reactions+Attacking_Position+
-# #                         Composure+Short_Pass+Acceleration+Speed+Stamina+Strength+
-# #                         Heading+Shot_Power+Finishing+Long_Shots+Volleys, data=mid_pl_train)
-# #
-# # summary(mid.lm.laSelect)
-# #
-# # mid.lm.laSelect <- lm(Rating~Height+Ball_Control+Dribbling+Reactions+
-# #                         Attacking_Position+Short_Pass+Acceleration+Speed+Strength+
-# #                         Heading+Shot_Power+Finishing+Long_Shots+Volleys,
-# #                       data=mid_pl_train)
-# #
-# # summary(mid.lm.laSelect)
-# #
-# # pred_lasso <- mid.lm.laSelect %>%
-# #   predict(mid_pl_test)
-# #
-# # get_MAPE(mid_pl_test$Rating,pred_lasso)
+set.seed(12345)
+mid.lasso.cvfit <- cv.glmnet(x=as.matrix(mid_pl_train[,-1]),
+                             y = mid_pl_train$Rating,type.measure="mse",
+                            alpha = 1, nfolds = 10)
+
+mid.lasso.coef <- coef(mid.lasso.cvfit$glmnet.fit, 
+                       s=mid.lasso.cvfit$lambda.1se, exact = F)
+```
+
+利用上述的训练集，通过glmnet包中的cv.glmnet函数对数据进行训练，函数的参数alpha取1，利用**10折交叉验证**获取最优的lambda取值，结果如下:
+
+```{r mid_cvplot,fig.width=8,fig.height=4,out.width='70%',fig.cap='MSE-log(lambda) plot(middle)'}
+plot(mid.lasso.cvfit)
+```
+
+我们得到最优的lambda为0.06541449，得到的系数结果如下，系数非0的即为lasso方法选择出来的变量，即选出了22个变量，我们可以看出，lasso方法比逐步回归抛弃了更多的解释变量，获得了更为精简的模型，虽然解释能力不如上一个模型那么全面，但保留下来的变量均是对于中场球员来说非常重要的解释变量。
+
+```{r mid_cvcoef}
+mid_coef <- as.matrix(mid.lasso.coef)
+mid_coef <- as.data.frame(mid_coef)
+
+mid_coef <- mid_coef %>% 
+  filter(s1 > 0)
+
+colnames(mid_coef) <- c('系数值')
+
+kable(mid_coef, align = 'c', caption = 'lasso选择的变量及系数')
+```
+
+在此基础上，我们使用通过lasso的交叉验证的训练出来的模型对测试集进行预测，获得的**MAPE为2.27%**。
+
+```{r mid_lassomape}
+mid.lasso.pred <- predict(mid.lasso.cvfit, newx = as.matrix(mid_pl_test[,-1]),
+                          s='lambda.1se')
+mid.lasso.mape <- get_MAPE(mid_pl_test$Rating,mid.lasso.pred)
 ```
 
 ## 后场球员评分
 
-```{r backward}
+```{r backward, include=FALSE}
+set.seed(12345)
+back_pl <- t_data_full %>%
+  filter(Area == "backward") %>%
+  select(-Preffered_Position, -Area, -Name, -starts_with("GK_")) %>%
+  as.data.frame()
 
-# back_pl <- t_data_full %>% 
-#   filter(Area == "backward") %>% 
-#   select(-Preffered_Position, -Area, -Name, -starts_with("GK_")) %>% 
-#   as.data.frame()
-# 
-# back_pl_index <- createDataPartition(back_pl$Rating, p=0.7, list = F)
-# back_pl_train <- back_pl[back_pl_index,]
-# back_pl_test <- back_pl[-back_pl_index,]
-# 
-# back_fullmodel <- lm(Rating~., data = back_pl_train)
-# summary(back_fullmodel)
-# back_model <- step(back_fullmodel,direction = 'backward')
-# summary(back_model)
-# 
-# pred_full <- back_fullmodel %>% 
-#   predict(back_pl_test)
-# 
-# get_MAPE(back_pl_test$Rating,pred_full)
-# 
-# pred_stepwised <- back_model %>% 
-#   predict(back_pl_test)
-# 
-# get_MAPE(back_pl_test$Rating,pred_stepwised)
-# 
-# plot(back_model,1)
+back_pl_index <- createDataPartition(back_pl$Rating, p=0.7, list = F)
+back_pl_train <- back_pl[back_pl_index,]
+back_pl_test <- back_pl[-back_pl_index,]
 
+back_fullmodel <- lm(Rating~., data = back_pl_train)
+
+back_model <- step(back_fullmodel,direction = 'backward')
+
+back_pred_stepwised <- back_model %>%
+  predict(back_pl_test)
+
+mid_mape <- get_MAPE(back_pl_test$Rating,back_pred_stepwised)
 ```
 
+在对于后场球员的分析中，将数据集按照7:3的比例分为训练集和测试集，我们在训练集上通过**逐步回归**的方法进行变量筛选，给出的模型如下，测试集的**MAPE为1.40%**。
 
-```{r backward_lasso}
-# back.lasso.cvfit <- cv.glmnet(x=as.matrix(back_pl_train[,-1]), 
-#                              y = back_pl_train$Rating,
-#                             alpha = 1, nfolds = 10)
-# 
-# plot(back.lasso.cvfit)
-# 
-# back.lasso.coef <- coef(back.lasso.cvfit$glmnet.fit,s=back.lasso.cvfit$lambda.1se,exact = F)
-# 
-# back.lasso.coef
-# 
-# # back.lm.laSelect <- lm(Rating~Height+Ball_Control+Dribbling+Reactions+Attacking_Position+
-# #                         Composure+Short_Pass+Acceleration+Speed+Stamina+Strength+
-# #                         Heading+Shot_Power+Finishing+Long_Shots+Volleys, data=back_pl_train)
-# # 
-# # summary(back.lm.laSelect)
-# # 
-# # back.lm.laSelect <- lm(Rating~Height+Ball_Control+Dribbling+Reactions+
-# #                         Attacking_Position+Short_Pass+Acceleration+Speed+Strength+
-# #                         Heading+Shot_Power+Finishing+Long_Shots+Volleys,
-# #                       data=back_pl_train)
-# # 
-# # summary(back.lm.laSelect)
-# # 
-# # pred_lasso <- back.lm.laSelect %>% 
-# #   predict(back_pl_test)
-# # 
-# # get_MAPE(back_pl_test$Rating,pred_lasso)
+```{r back_step}
+summary(back_model)
+```
+
+后场位置对于球员的要求更多集中在防守上，但仍有一部分后场球员拥有着不俗的进攻能力，他们承担着快速反击的任务。反映在模型上，我们可以看出，经过变量筛选之后，模型保留了较多的防守能力属性和一些与快速反击相关的进攻能力属性。
+
+在保留的属性中，盯防（Marking）、铲球（Sliding_Tackle）、反击（Reactions ）、逼抢（Standing_Tackle）和铲断（Interceptions）是后卫球员的基本素质，控球（Ball_Control）能力保证了后卫在断下皮球后，受对方前锋逼抢而不丢掉球权造成后院起火的鲁棒性。盘带（Dribbling）的能力为负也代表了后卫在自家后场盘带是非常危险的行为，容易早场球被抢断。年龄（Age）对于后卫球员能力是正相关是很容易理解的，对于后卫来讲，经验比年轻更为重要，选择一个合适的站位和对对方前锋进攻路线的正确判断能够事半功倍，葡萄牙后卫佩佩和若泽·丰特、意大利后卫基耶利尼和巴尔扎利都是越老越妖的典范。头球（Heading）是很多高中卫的看家本领，一方面可以参与进攻，另一方面在任意球和角球防守中都可以起到破坏地方进攻的意图，切尔西传奇队长特里和皇马功勋队长拉莫斯都是头球好手。进攻的属性对于后卫来说也不是坏事，世界足坛有很多带刀后卫，如马塞洛（有个梗是三个马塞洛防不住一个马塞洛），速度（Speed）、短传（Shot_Pass）、反击（Reactions）、攻击能力（Aggression）和下底传中（Crossing）是他们的看家好戏。
+
+下面这个故事更说明了后卫的重要性。这场比赛是欧冠决赛历史上唯一一次后卫进3球的比赛。2013-2014赛季欧冠决赛，皇家马德里面对同城死敌马德里竞技，上半场马竞**后卫**戈丁头球攻破皇马大门；下半场加时，皇马仍0:1落后马竞，92分48秒，皇马**后卫**拉莫斯接莫德里奇开出的角球上演**头球**绝平比分的奇迹，将比赛带入加时赛；加时赛第110分钟，迪玛利亚连过3人射门被扑，贝尔门前小角度头球破门，皇马反超比分；第118分钟，皇马**后卫**马塞洛突入禁区，辗转腾挪将皮球送入马竞大门；第120分钟，戈丁铲倒C罗，C罗主罚点球一蹴而就，4:1，彻底杀死了比赛。**后卫**拉莫斯9248**头球**绝平奇迹为皇家马德里五年四欧冠的王超拉开了序幕。
+
+模型的残差图如下。
+
+```{r back_residual,fig.width=8,fig.height=4,out.width='70%',fig.cap='后场球员模型残差图'}
+plot(back_model,1)
+```
+
+```{r back_lasso}
+set.seed(12345)
+back.lasso.cvfit <- cv.glmnet(x=as.matrix(back_pl_train[,-1]),
+                             y = back_pl_train$Rating,type.measure="mse",
+                            alpha = 1, nfolds = 10)
+
+back.lasso.coef <- coef(back.lasso.cvfit$glmnet.fit, 
+                       s=back.lasso.cvfit$lambda.1se, exact = F)
+```
+
+利用上述的训练集，通过glmnet包中的cv.glmnet函数对数据进行训练，函数的参数alpha取1，利用**10折交叉验证**获取最优的lambda取值，结果如下:
+
+```{r back_cvplot,fig.width=8,fig.height=4,out.width='70%',fig.cap='MSE-log(lambda) plot(backward)'}
+plot(back.lasso.cvfit)
+```
+
+我们得到最优的**lambda为0.05782153**，得到的系数结果如下，系数非0的即为lasso方法选择出来的变量，即选出了19个变量，我们可以看出，lasso方法保留下来的变量与逐步回归的方法获得的模型相似。
+
+```{r back_cvcoef}
+back_coef <- as.matrix(back.lasso.coef)
+back_coef <- as.data.frame(back_coef)
+
+back_coef <- back_coef %>% 
+  filter(s1 > 0)
+
+colnames(back_coef) <- c('系数值')
+
+kable(back_coef, align = 'c', caption = 'lasso选择的变量及系数')
+```
+
+在此基础上，我们使用通过lasso的交叉验证的训练出来的模型对测试集进行预测，获得的**MAPE为1.41%**。
+
+```{r back_lassomape}
+back.lasso.pred <- predict(back.lasso.cvfit, newx = as.matrix(back_pl_test[,-1]),
+                          s='lambda.1se')
+back.lasso.mape <- get_MAPE(back_pl_test$Rating,back.lasso.pred)
 ```
 
 ## 球员位置判别
