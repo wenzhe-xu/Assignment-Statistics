@@ -72,9 +72,6 @@ library(corrplot)
 
 * lasso：[glmnet](https://hastie.su.domains/Papers/glmnet.pdf) 包中的glmnet函数
 
-Get code and data from [github](https://github.com/wenzhe-xu/Assignment-Statistics), have an Octotastic day!
-
-
 # 描述性统计
 
 ## 数据来源
