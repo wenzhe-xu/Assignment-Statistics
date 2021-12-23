@@ -41,6 +41,7 @@ library(psych)
 select = dplyr::select
 library(MASS)
 library(glmnet)
+library(corrplot)
 ```
 
 # 任务介绍
@@ -49,15 +50,13 @@ library(glmnet)
 
 应用回归方法解决一个实际问题
 
-自己选择一个实际问题，收集数据，使用回归方法解决。
-
-注意：所使用的回归方法不限于课堂讲过的线性回归方法，也可以使用其他回归方法，如曲线回归方法，广义回归方法等。
+自己选择一个实际问题，收集数据，使用回归方法解决。注意：所使用的回归方法不限于课堂讲过的线性回归方法，也可以使用其他回归方法，如曲线回归方法，广义回归方法等。
 
 **任务目标**
 
 通过网络收集2017年世界球坛职业球员的数据，并进行如下分析。
 
-1. 对球员的评分和各项能力水平进行**多元线性回归分析**，通过**逐步回归**或**lasso**的方法对变量进行筛选，解决多重共线性的问题，寻找对球员评分影响最大的能力属性，基于此，对球员评分进行预测。
+1. 对球员的评分和各项能力水平进行**多元线性回归分析**，通过**逐步回归**或**lasso**的方法对变量进行筛选，解决多重共线性的问题（若存在多重共线性），寻找对球员评分影响最大的能力属性，基于此，对球员评分进行预测。
 
 2. 对球员的场上位置和各项能力水平进行**多项logistic回归**，通过**逐步回归**或**lasso**的方法对变量进行筛选，建立模型，对球员的场上位置进行预测。
 
@@ -80,24 +79,92 @@ Get code and data from [github](https://github.com/wenzhe-xu/Assignment-Statisti
 
 ## 数据来源
 
-> 数据由热心网友Ustinian提供。
+数据集合由热心网友Ustinian提供，可点击[此处](https://www.heywhale.com/mw/dataset/5e79c46b98d4a8002d2cb73c/file)或通过 [github](https://github.com/wenzhe-xu/Assignment-Statistics) 网页获取。
 
 ## 数据介绍
 
-数据集包含了2017年世界足坛职业比赛范围内活跃的足球运动员的能力数据，包含53个属性，共17588条数据，表1给出了数据的各项属性的说明。数据较为全面地包含了17588位职业球员的基本信息、生理数据和足球能力数据，可以反映球员能力。
+数据集包含了2017年世界足坛职业比赛范围内活跃的足球运动员的能力数据，包含53个属性，共17588条数据，表1给出了数据的各项属性的说明。数据较为全面地包含了17588位职业球员的基本信息、生理数据和足球能力数据，可以反映球员能力。属性1到属性9为球员的基本信息，包含国籍、俱乐部信息等；属性9为球员评分；属性11至属性15是球员基本生理数据，包含年龄和惯用脚等信息，属性16是球员擅长的位置，属性17至属性53为球员的各项专业能力水平。
 
 ```{r infomation}
 df <- read.csv('data/FullData.csv',header = T)
 tdf <- as_tibble(df)
-info <- read.csv('data/info.csv',header = T)
-info$index <- as.character(info$index)
+info <- read.csv('data/info-utf8.csv',header = T)
+# info$index <- as.character(info$index)
 kable(info, align = 'c', caption = "数据说明")
 showtext_auto()
+```
+
+```{r definition, include=FALSE}
+# get mean absolute percentage error
+get_MAPE <- function(test,prediction){
+  result <- abs((test-prediction)/test)
+  MAPE <- mean(result)
+  return(MAPE)
+}
+# min_max标准化
+min_max <- function(vec){
+  result <- (vec-min(vec))/(max(vec)-min(vec))
+  return(result)
+}
+# 获取f1-score
+get_f1 <- function(p,r){
+  f1 <- (2*p*r)/(r+p)
+  return(f1)
+}
+# 获取广义f1-score
+get_marcoF1 <- function(pred,truth){
+  xtab <- table(pred,truth)
+  cfm <- as.matrix(xtab)
+  p_1 <- cfm[1,1]/sum(cfm[1,])
+  r_1 <- cfm[1,1]/sum(cfm[,1])
+  p_2 <- cfm[2,2]/sum(cfm[2,])
+  r_2 <- cfm[2,2]/sum(cfm[,2])
+  p_3 <- cfm[3,3]/sum(cfm[3,])
+  r_3 <- cfm[3,3]/sum(cfm[,3])
+  f11 <- get_f1(p_1,r_1)
+  f12 <- get_f1(p_2,r_2)
+  f13 <- get_f1(p_3,r_3)
+  F1 <- mean(c(f11,f12,f13))
+  return(F1)
+}
+# 定义位置
+forward <- c("CF","LW","RW","ST")
+middle <- c("CAM","CDM","CM","LM","RM")
+backward <- c("CB","LB","LWB","RB","RWB")
+goalkeeper <- c("GK")
+```
+
+```{r data_cleaning, include=FALSE}
+# 读取数据
+data_full <- read.csv('data/FullData.csv',header = T)
+# 抛弃单位，便于运算
+data_full <- separate(data = data_full, col = Height, sep = ' ',
+                      into = c('Height','Height_2'))
+data_full <- separate(data = data_full, col = Weight, sep = ' ',
+                      into = c('Weight','Weight_2'))
+data_full$Height <- as.numeric(data_full$Height)
+data_full$Weight <- as.numeric(data_full$Weight)
+# 保留第一个擅长位置
+data_full <- separate(data = data_full,col = Preffered_Position, sep = "/", 
+         into = c('Preffered_Position','Preffered_Position_2'))
+data_full$Area <- data_full$Preffered_Position
+data_full$Area[which(data_full$Area %in% forward)] <- 'forward'
+data_full$Area[which(data_full$Area %in% middle)] <- 'middle'
+data_full$Area[which(data_full$Area %in% backward)] <- 'backward'
+data_full$Area[which(data_full$Area %in% goalkeeper)] <- 'goalkeeper'
+t_data_full <- as_tibble(data_full)
+# 去除不需要的列
+t_data_full <- t_data_full %>% 
+  select(-(Nationality:Contract_Expiry),-Birth_Date,-Work_Rate
+         ,-Preffered_Foot,-ends_with('_2'),-Weak_foot,-Skill_Moves) %>% 
+  select(Name,Preffered_Position,Area,Rating,everything())
 ```
 
 ## 描述性统计
 
 ### 球员主要数据
+
+表2和图1给出了球员的各项基本数据。球员的评分最低是45分，最高是94分，平均值和中位数分别为66分和66.2分，比较接近，第1个四分位点和第3个四分位点分别是62分和71分，相差9分，说明数据较为集中，从球员的评分分布图来看，球员的评分呈现正态分布，这也是我们所预期的，评分密度图和QQ图也给出了相应的印证；球员的年龄最高是47岁，最低是17岁，第3个四分位点为29，说明多数球员的年龄均在30岁以下，从图中我们也可以看出，球员的年龄多集中在33岁以下，超过35岁还没有退役的球员少之又少；球员的身高分布在155cm至207cm之间，体重分布在48kg至110kg之间，球员的身高和体重分布均呈现较为接近正态分布的情况。
 
 ```{r summary}
 tdf <- separate(data = tdf, col = Height, sep = ' ',
@@ -172,6 +239,8 @@ ggarrange(rating.hist,rating.density, rating.qq,
 
 ### 球员惯用脚
 
+表3给出了球员的惯用脚，从中可以看出，多数球员的惯用脚为右脚，4094名球员的惯用脚是左脚。图2给出了不同惯用脚球员的评分箱线图，从中我们可以看出，惯用脚为左脚的球员的平均评分略微高于惯用脚为右脚的球员，但没有明显高于；两类球员都存在离群点，且均为远超于普通球员的离群点数量要多余远低于平均水平的离群点数量。从图2中我们并不能看出惯用脚对球员评分有无显著影响，因此后面本报告也将对惯用脚这一属性做删除处理。
+
 ```{r, preffered_foot}
 pf <- tdf %>% 
   group_by(Preffered_Foot) %>% 
@@ -181,14 +250,23 @@ pf <- tdf %>%
 colnames(pf) <- c('惯用脚','频数')
 
 kable(pf, align = 'c', caption='球员惯用脚情况')
+
+pf_rating <- tdf %>% 
+  select(Preffered_Foot, Rating) %>% 
+  as.data.frame()
+
+plot_pr <- ggplot(data = pf_rating, aes(x = Preffered_Foot, y = Rating, 
+                                        fill = Preffered_Foot)) +
+  geom_boxplot(outlier.shape = 21) +
+  theme_bw() + xlab('惯用脚') + ylab('评分')
 ```
 
 ### 球员擅长位置
 
-Preffered_Position这一属性给出了各位球员的擅长位置，如下表所示。
+表4反应了Preffered_Position这一属性，给出了擅长位置类别和每个位置的人数。本报告仅截取了球员的第一个擅长的位置进行分析，表中可见，人数较少的三个位置是CF, LWB和RWB，分别为68人、23人和22人，这三个位置对球员的能力要求也比较特殊，因而人数较少。图2也给出了相应的箱线图，可以看到四个类别之间，球员的评分差距很小。
 
 ```{r position}
-position <- read.csv('data/position.csv',header = T)
+position <- read.csv('data/position-utf8.csv',header = T)
 # kable(position, align = 'c', caption = '球员的擅长位置及分类')
 ```
 
@@ -209,9 +287,26 @@ posi_df <- merge(position, posi_df, by='简称', all.x = T)
 kable(posi_df, align = 'c', caption='球员擅长位置')
 ```
 
+```{r position_boxpplot}
+pb <- t_data_full %>% 
+  select(Area,Rating) %>% 
+  as.data.frame()
+
+plot_pb <- ggplot(pb, aes(x = Area, y = Rating, fill = Area)) +
+  geom_boxplot(outlier.shape = 21) + 
+  theme_bw() + xlab("场上位置") + ylab("评分") +
+  theme(
+   axis.text.x = element_text(angle = 10)
+  )
+```
+
+```{r two_boxplot, fig.width=8,fig.height=3,fig.cap='球员评分箱线图'}
+ggarrange(plot_pr, plot_pb, ncol = 2)
+```
+
 ### 球员各项能力
 
-球员各项能力分布如图2所示。
+球员各项能力分布如图3所示。我们可与可以看到有很多属性的评分分布图呈现了双峰甚至多个峰的特点，出现这种情况的原因是该属性是用于描述特定位置的球员能力的属性，这种能力属性的分布应当是两个甚至多个正态分布的叠加（属于该位置的球员有一个正态分布，一般具有较高的均值，其他球员在该项能力上属于另一个正态分布）。这种情况，最明显的是最后5个特定描述门将的属性（以GK开头）,从图中我们可以明显看出哪些球员是门将，哪些球员不是门将；这种情况表现比较明显的能力属性还有Marking, Interceptions, Standing_Tackle, Sliding_Tackle，这四个属性均是后卫球员的特色属性（依次是盯人、前端、逼抢和铲球），我们可以大致推断，这几幅图中右侧峰的球员多数是后卫球员，另一侧多为非后卫球员；对于Heading（头球）这一属性，我们可以猜测，右侧的峰多为身高比较高的球员，左侧的峰多为身高比较低的球员；对于Crossing（下底传中）。可以猜测，右侧的峰多为进攻型边后卫和边锋，左侧的峰应当绝大部分都是门将球员。
 
 ```{r graph_function}
 library(grid)
@@ -241,6 +336,8 @@ for (i in 22:55) {
 ggarrange(plotlist = plot_list,ncol=6,nrow = 6)
 ```
 
+明显呈现出多个峰的属性应当是我们在后面比较关注的属性，他们可能隐含了更多的位置特色信息，在特定位置球员的评分体系中应当也占有极高权重或极低权重（甚至不被纳入某位置的评分体系）。
+
 ## 数据预处理
 
 ### 缺失值处理
@@ -266,106 +363,80 @@ ggarrange(plotlist = plot_list,ncol=6,nrow = 6)
 
 多数球员能力特点比较全面，擅长位置有多个。例如：C·罗纳尔多擅长的位置有LW和ST，但都属于前场；德布劳内擅长的位置有CAM/RM/LM都属于中场；迪巴拉擅长的位置有ST和CAM，前者属于前场，后者属于中场。对于这种情况，我们仅保留球员最擅长的位置，即第一个位置，并按照forward、middle、backward和goalkeeper进行合并分类。
 
-```{r definition, include=FALSE}
-# get mean absolute percentage error
-get_MAPE <- function(test,prediction){
-  result <- abs((test-prediction)/test)
-  MAPE <- mean(result)
-  return(MAPE)
-}
-# min_max标准化
-min_max <- function(vec){
-  result <- (vec-min(vec))/(max(vec)-min(vec))
-  return(result)
-}
-# 获取f1-score
-get_f1 <- function(p,r){
-  f1 <- (2*p*r)/(r+p)
-  return(f1)
-}
-# 获取广义f1-score
-get_marcoF1 <- function(pred,truth){
-  xtab <- table(pred,truth)
-  cfm <- as.matrix(xtab)
-  p_1 <- cfm[1,1]/sum(cfm[1,])
-  r_1 <- cfm[1,1]/sum(cfm[,1])
-  p_2 <- cfm[2,2]/sum(cfm[2,])
-  r_2 <- cfm[2,2]/sum(cfm[,2])
-  p_3 <- cfm[3,3]/sum(cfm[3,])
-  r_3 <- cfm[3,3]/sum(cfm[,3])
-  f11 <- get_f1(p_1,r_1)
-  f12 <- get_f1(p_2,r_2)
-  f13 <- get_f1(p_3,r_3)
-  F1 <- mean(c(f11,f12,f13))
-  return(F1)
-}
-# 定义位置
-forward <- c("CF","LW","RW","ST")
-middle <- c("CAM","CDM","CM","LM","RM")
-backward <- c("CB","LB","LWB","RB","RWB")
-goalkeeper <- c("GK")
-```
-
-```{r data_cleaning, include=FALSE}
-# 读取数据
-data_full <- read.csv('data/FullData.csv',header = T)
-# 抛弃单位，便于运算
-data_full <- separate(data = data_full, col = Height, sep = ' ',
-                      into = c('Height','Height_2'))
-data_full <- separate(data = data_full, col = Weight, sep = ' ',
-                      into = c('Weight','Weight_2'))
-data_full$Height <- as.numeric(data_full$Height)
-data_full$Weight <- as.numeric(data_full$Weight)
-# 保留第一个擅长位置
-data_full <- separate(data = data_full,col = Preffered_Position, sep = "/", 
-         into = c('Preffered_Position','Preffered_Position_2'))
-data_full$Area <- data_full$Preffered_Position
-data_full$Area[which(data_full$Area %in% forward)] <- 'forward'
-data_full$Area[which(data_full$Area %in% middle)] <- 'middle'
-data_full$Area[which(data_full$Area %in% backward)] <- 'backward'
-data_full$Area[which(data_full$Area %in% goalkeeper)] <- 'goalkeeper'
-t_data_full <- as_tibble(data_full)
-# 去除不需要的列
-t_data_full <- t_data_full %>% 
-  select(-(Nationality:Contract_Expiry),-Birth_Date,-Work_Rate
-         ,-Preffered_Foot,-ends_with('_2'),-Weak_foot,-Skill_Moves) %>% 
-  select(Name,Preffered_Position,Area,Rating,everything())
-```
 
 # 回归分析
+
+不同的位置对球员的要求不同，评价体系对各属性代表的能力也有不同的侧重点，因此在回归分析这一部分中我们分别对场上四个部分（前场、中场、后场和门将）进行回归分析，并在最后进行球员位置的回归预测。
+
+## 相关系数
+
+下图是场上四个位置的Pearson相关系数热力图，依次是前场、中场、后场和门将，其中前三幅图均删除了“GK_2”开头的门将特色能力属性，从图中我们可以看出多个能力属性之间存在较高的相关系数，提示可能存在多重共线性的问题，在后续的回归分析中我们应当通过逐步回归等方法进行变量筛选。另外，本报告在热力图中进行了层次聚类，和Rating这一项被聚在同一类的属性应当是我们在分析该位置时多加关注的属性。
+
+```{r corrplot_gk,fig.width=8,fig.height=8, out.height='49%'}
+# 计算相关系数矩阵热力图
+GK_cor <- t_data_full %>%
+  filter(Preffered_Position == "GK") %>% # only goalkeeper
+  select(-Preffered_Position, -Name, -Area) %>%
+  as.data.frame()
+
+FW_cor <- t_data_full %>%
+  filter(Area == "forward") %>% # only goalkeeper
+  select(-Preffered_Position, -Name, -Area, -starts_with('GK_')) %>%
+  as.data.frame()
+
+MD_cor <- t_data_full %>%
+  filter(Area == "middle") %>% # only goalkeeper
+  select(-Preffered_Position, -Name, -Area, -starts_with('GK_')) %>%
+  as.data.frame()
+
+BW_cor <- t_data_full %>%
+  filter(Area == "backward") %>% # only goalkeeper
+  select(-Preffered_Position, -Name, -Area, -starts_with('GK_')) %>%
+  as.data.frame()
+
+corplot_2 <- corrplot(cor(FW_cor),method = 'circle',
+                      order = 'hclust',addrect = 5)
+corplot_3 <- corrplot(cor(MD_cor),method = 'circle',
+                      order = 'hclust',addrect = 5)
+corplot_4 <- corrplot(cor(BW_cor),method = 'circle',
+                      order = 'hclust',addrect = 5)
+corplot_1 <- corrplot(cor(GK_cor),method = 'circle',
+                      order = 'hclust',addrect = 2)
+```
 
 ## 门将位置评分
 
 由于门将位置的特殊性，其相关能力已经很明显地标注在数据集中（GK_开头的属性），而且门将的位置与场上其他位置的球员能力分布存在肉眼可见的差距，门将更多依靠手部能力、站位、反应能力和定位球指挥能力，对于速度、传球、逼抢、盯人、铲球等能力的要求相对较低（尽管部分阵型很看重门将的长传能力，但其对于其长传能力的要求仍大幅低于中场球员或后卫）。因此，我们首先对门将进行回归分析。
 
-```{r GK}
-# set.seed(98765)
-# GK_attribute <- c('GK_Positioning','GK_Diving','GK_Kicking','GK_Handling','GK_Reflexes')
-# # dataset
-# GK <- t_data_full %>%
-#   filter(Preffered_Position == "GK") %>% # only goalkeeper
-#   select(-Preffered_Position, -Name, -Area) %>%
-#   as.data.frame()
-# # FULL Model
-# GK_0_Fullmodel <- lm(Rating ~ ., GK)
-# summary(GK_0_Fullmodel)
-# # Variable Selection —— backward stepping via AIC
-# GK_0_model <- step(GK_0_Fullmodel, direction = 'backward')
-# summary(GK_0_model)
-# GK_formula <- GK_0_model$call$formula # get formula
-# # Data Partition
-# GK_index <- createDataPartition(GK$Rating,p=0.7,list=F)
-# GK_train <- GK[GK_index,]
-# GK_test <- GK[-GK_index,]
-# # training model
-# GK_lm <- lm(GK_formula, GK_train)
-# summary(GK_lm)
-# # prediction
-# GK_pred <- predict(GK_lm,GK_test)
-# # get MAPE
-# get_MAPE(GK_test$Rating,GK_pred)
+```{r GK, include=FALSE}
+set.seed(98765)
+GK_attribute <- c('GK_Positioning','GK_Diving','GK_Kicking','GK_Handling','GK_Reflexes')
+# dataset
+GK <- t_data_full %>%
+  filter(Preffered_Position == "GK") %>% # only goalkeeper
+  select(-Preffered_Position, -Name, -Area) %>%
+  as.data.frame()
+# FULL Model
+GK_0_Fullmodel <- lm(Rating ~ ., GK)
+summary(GK_0_Fullmodel)
+GK_0Fvif <- car::vif(GK_0_Fullmodel)
+# Variable Selection —— backward stepping via AIC
+GK_0_model <- step(GK_0_Fullmodel, direction = 'backward')
+summary(GK_0_model)
+GK_0vif <- car::vif(GK_0_model)
+GK_formula <- GK_0_model$call$formula # get formula
+# Data Partition
+GK_index <- createDataPartition(GK$Rating,p=0.7,list=F)
+GK_train <- GK[GK_index,]
+GK_test <- GK[-GK_index,]
+# training model
+GK_lm <- lm(GK_formula, GK_train)
+summary(GK_lm)
+# prediction
+GK_pred <- predict(GK_lm,GK_test)
+# get MAPE
+get_MAPE(GK_test$Rating,GK_pred)
 ```
-
 
 ## 前场球员评分
 
@@ -637,6 +708,12 @@ t_data_full <- t_data_full %>%
 # }
 # F1
 ```
+
+# 分析与总结
+
+# 致谢
+
+感谢孙海燕老师本学期的辛勤教学，感谢助教老师的认真负责。作为本科应用物理专业转应用统计专业的同学，我深知我的统计基础较为薄弱，从数理统计的课堂上我学到很多知识，在今后我也将继续钻研统计知识。
 
 
 
