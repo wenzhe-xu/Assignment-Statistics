@@ -723,73 +723,123 @@ back.lasso.pred <- predict(back.lasso.cvfit, newx = as.matrix(back_pl_test[,-1])
 back.lasso.mape <- get_MAPE(back_pl_test$Rating,back.lasso.pred)
 ```
 
-## 球员位置判别
+## 球员位置回归预测
 
-```{r multinorm}
-# set.seed(10086)
-# area_df <- t_data_full %>% 
-#   filter(Preffered_Position != "GK") %>% 
-#   select(-Preffered_Position, -Rating, -Name,-Age, -starts_with("GK_")) %>% 
-#   as.data.frame()
-# 
-# area_index <- createDataPartition(area_df$Area,p = 0.7,list = F)
-# area_train <- area_df[area_index,]
-# area_test <- area_df[-area_index,]
-# 
-# area_model <- multinom(Area~., data = area_train)
-# 
-# area_pred <- area_model %>% 
+在本节中，将会对球员位置做多分类logistic回归，并通过逐步回归和lasso的方法进行变量筛选，然后建立模型，对测试集进行预测，最终以F1-Score作为评价标准，评价模型。
+
+其中，F1-Score是召回率和精确率的调和平均数，公式为：
+
+$$
+\rm{
+F1~Score = 2 \times \frac{presion \times recall}{precision + recall}
+}
+$$
+
+其中，precision指被分类器判定正例中的正样本的比重，recall指被预测为正例的占总的正例的比重。对于多分类的问题，我们使用Marco F1-Score, 即首先求出每个类别的F1-Score，然后求平均数，作为模型的Marco F1-Score。
+
+```{r multinorm,include=FALSE}
+set.seed(10086)
+area_df <- t_data_full %>%
+  filter(Preffered_Position != "GK") %>%
+  select(-Preffered_Position, -Rating, -Name,-Age, -starts_with("GK_")) %>%
+  as.data.frame()
+
+area_index <- createDataPartition(area_df$Area,p = 0.7,list = F)
+area_train <- area_df[area_index,]
+area_test <- area_df[-area_index,]
+
+area_model <- multinom(Area~., data = area_train)
+
+area_pred <- area_model %>%
+  predict(area_test)
+
+xtab <- table(area_pred,area_test$Area)
+area_cfm <- confusionMatrix(xtab)
+
+marco_F1 <- get_marcoF1(area_pred,area_test$Area)
+# 逐步回归，这里很慢，最后一次knit的时候在运行这里吧
+# area_model_back <- step(area_model,direction = 'backward')
+# area_step <- area_model_back$call$formula
+# area_pred_back <- area_model_back %>%
 #   predict(area_test)
-# 
-# xtab <- table(area_pred,area_test$Area)
-# area_cfm <- confusionMatrix(xtab)
-# area_cfm
-# 
-# marco_F1 <- get_marcoF1(area_pred,area_test$Area)
-# 
-# # area_model_back <- step(area_model,direction = 'backward')
-# # 
-# # area_pred_back <- area_model_back %>% 
-# #   predict(area_test)
-# # F1_back <- get_marcoF1(area_pred_back,area_test$Area)
-# # 
-# # corr.test(area_df[,-1])
-# 
-# # lasso.fit <- glmnet(x = as.matrix(area_train[,-1]),
-# #                     y = area_train$Area, family = 'multinomial',alpha = 1)
-# # plot(lasso.fit, xvar="lambda", label=TRUE)
-# # 
-# # cvlasso <- cv.glmnet(x = as.matrix(area_train[,-1]),
-# #                      y = area_train$Area,family = 'multinomial',
-# #                      alpha = 1, nfolds = 5)
-# # plot(cvlasso)
-# # cvlasso$lambda.min
-# # coef(cvlasso$glmnet.fit,s=cvlasso$lambda.min,exact = F)
+# step_cfm <- confusionMatrix(table(area_pred_back, area_test$Area))
+# F1_back <- get_marcoF1(area_pred_back,area_test$Area)
 
+cvlasso <- cv.glmnet(x = as.matrix(area_train[,-1]),
+                     y = area_train$Area,family = 'multinomial',type.measure="class",
+                     alpha = 1, nfolds = 10)
+plot(cvlasso)
+cvlasso$lambda.min
+cvlasso$lambda.1se
+coef(cvlasso$glmnet.fit,s=cvlasso$lambda.min,exact = F)
+
+cv.pred <- predict(cvlasso, newx = as.matrix(area_test[,-1]), s = 'lambda.1se',
+                   type = "response")
+
+cv.predicted <- colnames(cv.pred)[apply(cv.pred,1,which.max)]
+
+cv.xtab <- table(cv.predicted, area_test$Area)
+cv.cfm <- confusionMatrix(cv.xtab)
+cv.mF1 <- get_marcoF1(cv.predicted, area_test$Area)
 ```
 
-```{r k_fold}
-# area_cv <- area_df
-# area_cv$index <- createFolds(area_df$Area, k = 5, list = F)
-# area_cv <- as_tibble(area_cv)
-# 
-# F1 <- vector()
-# for (i in 1:5) {
-#   area_cvtrain <- area_cv %>% 
-#     filter(index != i) %>% 
-#     select(-index) %>% 
-#     as.data.frame()
-#   area_cvtest <- area_cv %>% 
-#     filter(index == i) %>% 
-#     select(-index) %>% 
-#     as.data.frame()
-#   area_cvmodel <- multinom(Area~., data = area_cvtrain)
-#   area_cvpred <- area_cvmodel %>% 
-#     predict(area_cvtest)
-#   f1 <- get_marcoF1(area_cvpred,area_cvtest$Area)
-#   F1 <- c(F1,f1)
-# }
-# F1
+对于全模型，如下是它的混淆矩阵和一些模型的数据，我们可以看出全模型对于后场球员的预测效果最好，对于前场球员的预测效果最差。通过混淆矩阵，我们可以发现，存在很多中场球员被预测为其他位置球员和其他卑职球员被预测为中场球员的情况，这与中场位置对能力要求的全面性分不开关系。事实上，球员的位置并不是绝对不变的，很多中场球员在正式比赛中也可以客串前场球员或者后场球员，甚至有些中场球员会转型成其他位置的球员，如初出茅庐的C罗是中场球员，最擅长的是过人，但C罗转会皇马后，由于阵容要求和自身伤病趋势，逐渐转型为前锋，成为恐怖的进球机器；再有，如利物浦的后卫阿诺德，以前司职中场，后来转型成为后卫，并在后卫位置上如鱼得水，在利物浦主场上演安菲尔德奇迹逆转巴塞罗那的比赛中，他快发任意球，打的对方措手不及，成为逆转的关键。
+
+模型的整体预测能力还算可以，Accuracy为0.8872，95%CI为(0.8778, 0.8962)，Kappa系数为0.8239，F1-Score为0.8830957，分类效果还是比较好的。
+
+```{r cfm_full}
+kable(area_cfm$table, align = 'c', caption = '全模型的混淆矩阵')
+kable(t(area_cfm$byClass), align = 'c', caption = '全模型分类别的模型结果')
+```
+
+下面3个表给出了lasso回归筛选出来的模型保留的解释变量的系数
+
+```{r lasso-formula}
+area.lasso.coef <- coef(cvlasso$glmnet.fit, 
+                       s=cvlasso$lambda.1se, exact = F)
+
+
+mid.lasso.coef <- as.matrix(area.lasso.coef$middle)
+mid.lasso.coef <- as.data.frame(mid.lasso.coef)
+colnames(mid.lasso.coef) <- c('系数值')
+mid.lasso.coef <- mid.lasso.coef %>% 
+  filter(系数值 > 0)
+
+for.lasso.coef <- as.matrix(area.lasso.coef$forward)
+for.lasso.coef <- as.data.frame(for.lasso.coef)
+colnames(for.lasso.coef) <- c('系数值')
+for.lasso.coef <- for.lasso.coef %>% 
+  filter(系数值 > 0)
+
+
+back.lasso.coef <- as.matrix(area.lasso.coef$backward)
+back.lasso.coef <- as.data.frame(back.lasso.coef)
+colnames(back.lasso.coef) <- c('系数值')
+back.lasso.coef <- back.lasso.coef %>% 
+  filter(系数值 > 0)
+
+
+kable(for.lasso.coef, align = 'c', caption = 'lasso选择的变量及系数(forward)')
+kable(mid.lasso.coef, align = 'c', caption = 'lasso选择的变量及系数(middle)')
+kable(back.lasso.coef, align = 'c', caption = 'lasso选择的变量及系数(backward)')
+```
+
+经过lasso回归获得模型结果如下，Accuracy为0.8853，95%CI为(0.8758, 0.8943)，Kappa系数为0.821，F1-Score为0.8812038，分类效果有所下降。
+
+```{r cfm_lasso}
+kable(cv.cfm$table, align = 'c', caption = 'lasso的混淆矩阵')
+kable(t(cv.cfm$byClass), align = 'c', caption = 'lasso分类别的模型结果')
+```
+
+经过逐步回归获得的回归模型公式为Area ~ Height + Ball_Control + Dribbling + Marking + Sliding_Tackle + Standing_Tackle + Aggression + Attacking_Position + Interceptions + Vision + Crossing + Short_Pass + Long_Pass + Speed + Stamina + Strength + Balance + Jumping + Heading + Finishing + Long_Shots + Curve + Penalties + Volleys。
+
+模型结果如下，Accuracy为0.8885 ，95%CI为(0.8792, 0.8974)，Kappa系数为0.8258，F1-Score为0.8843038，分类效果是目三个模型中最好的，但其实三个模型的分类效果没有差别。
+
+```{r cfm_step}
+# 上面的逐步回归很慢，这里等最后knit的时候再运行吧
+# kable(step_cfm$table, align = 'c', caption = '逐步回归的混淆矩阵')
+# kable(t(step_cfm$byClass), align = 'c', caption = '逐步回归分类别的模型结果')
+# area_model_back$call$formula
 ```
 
 # 分析与总结
